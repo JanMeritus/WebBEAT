@@ -2,6 +2,8 @@
 
 - backend program for checking live and extinct websites
 
+/usr/local/bin/python3.9 --version
+
 
 ## Prerequisities
 
@@ -19,8 +21,10 @@
 cd /opt/
 git clone https://github.com/JanMeritus/WebBEAT.git
 cd WebBEAT
+mkdir logs
 python3 -m pip check    # check main dependencies status
 python3 -m pip install  # install dependencies 
+
 ```
 
 ## Basic usage
@@ -37,6 +41,10 @@ optional arguments:
                         set API DB endpoint; -e {endpoint adress}/api/v2
   -s SEEDS, --Seeds SEEDS
                         set API seeds list; -s 'https://webarchiv.cz https://nkp.cz' OR dont specify and get it from seeds endpoint
+  -ss SEEDSSERVICE, --SeedsService SEEDSSERVICE
+                        set full adress for seeds API service; -ss {endpoint adress}
+  -bss BATCHSEEDSSERVICE, --BatchSeedsService BATCHSEEDSSERVICE
+                        set batch size for seeds service; -bss {integer}
   -p PAUSE, --Pause PAUSE
                         set Pause between seeds, def. for Whois 61 s.; -p 10
   -t TIMEOUTMARGIN, --TimeoutMargin TIMEOUTMARGIN
@@ -61,14 +69,15 @@ optional arguments:
 - whois decision 
 -- decide if you want use whois module 
 -- here implemented specifically for czech  CZ.NIC provider, for international just switch functionality of tweaked library - need to create bigger pauses - eg. 120 seconds
-- create respective crontab
+
+### Crontab installation
 
 ```
 #crontab -e
-# no-whois example
-0 1 1 * *  python3 /opt/webbeat/WebBEAT.py -p 5 --no-whois  -e http://121.0.0.1/api/v2/ >> WebBEAT-date +\%Y\%m\%d\%H\%M\%S.log
-# whois option example
-0 1 1 * *  python3 /opt/webbeat/WebBEAT.py -p 120 --whois_c  -e http://121.0.0.1/api/v2/ >> WebBEAT-date +\%Y\%m\%d\%H\%M\%S.log
+# no-whois example with urlFeeder service and batching
+0 1 * * *  python3 /opt/WebBeat/WebBEAT.py -p 2 --no-whois -ss http://121.0.0.1/api/urlFeeder/ -bss 50 -e http://121.0.0.1/api/v2/ >> /opt/WebBeat/logs/WebBEAT_$(date +\%Y\%m\%d\%H\%M\%S.log
+# whois option example without service
+0 1 1 * *  python3 /opt/webbeat/WebBEAT.py -p 120 --whois_c  -e http://121.0.0.1/api/v2/  -s "seeds1 seed2 ...">> /opt/WebBeat/logs/WebBEAT_$(date +\%Y\%m\%d\%H\%M\%S.log
 
 ```
 

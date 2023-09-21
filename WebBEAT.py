@@ -3,7 +3,7 @@
 ### WebBEAT checker
 ### Building a DB of sites living attributes
 ### Created by Zdenko Vozar
-### v.0.3 2022 09 04
+### v.0.4 2023 09 22
 
 import requests
 from bs4 import BeautifulSoup
@@ -15,6 +15,7 @@ import whois
 from whois.parser import WhoisEntry
 import re
 import argparse
+import sys
 
 ### Requirements.txt
 #argparse>=1.4.0
@@ -285,17 +286,31 @@ def remove_prefix(input_string, prefix):
         return input_string[len(prefix):]
     return input_string
 
-def get_data(endpoint_seedsin):
-    ret = requests.get(endpoint_seedsin, allow_redirects=True,  timeout=(2,30), stream=True) #  headers=headers_in,, timeout=0.001/timeout_margin, , allow_redirects=True
-    datad = json.loads(ret.content)
-    print('  -- Data grabbed')
-    seeds = []
-    for seed in datad['data']:
-        seeds.append('https://' + seed['url'])
-    print('  -- Total count of seeds: ', len(seeds))
+def parse_data(datad, batch_in = 50, page = 0):
+	total_ct = datad['sum']['total']
+	pages    = datad['sum']['pages']
 
-    seedsconc = ' '.join(seeds)
-    return seedsconc
+	seeds = []
+	for seed in datad['data']:
+	 	# seeds.append('https://' + seed['url'])
+	    seeds.append(seed)
+	if len(seeds) == batch_in:
+	    check_number = 'correct'
+	else:
+	    check_number = 'incorrect (',str(len(seeds) - batch_in),')'
+	print('  -- Data parsed (',page,'/',pages,'), total count of page / batch /  seeds: ',  str(page), str(batch_in), len(seeds), check_number)
+
+	seedsconc = ' '.join(seeds)
+	return seedsconc, total_ct, pages
+	
+def get_data(endpoint_seedsin, batch_in = 50, page = 0):
+	endpoint_seedsin = endpoint_seedsin + '?page=' + str(page) + '&limit=' + str(batch_in)
+	ret = requests.get(endpoint_seedsin, allow_redirects=True,  timeout=(2,30), stream=True) #  headers=headers_in,, timeout=0.001/timeout_margin, , allow_redirects=True
+	datad = json.loads(ret.content)
+	print('  -- Data grabbed')
+
+	return datad
+
 
 def send_to_DB(endpoint, data ):
   # 'http://10.5.1.78/api/import/'
@@ -312,6 +327,16 @@ def send_to_DB(endpoint, data ):
    #resp_DB = json.loads(r.text)
    #print(resp_DB)
    #print(f"Status Text: {resp_DB['stats']}")
+   
+def get_seeds(seeds_endpoint):
+	print('\n -- Importing Seeds from endpoint', seeds_endpoint,'; ',get_time())
+	headers = {"Content-Type": "application/json"}
+    r = requests.get(seeds_endpoint) #, headers=headers)
+    print(f"\n --- Status Code: {r.status_code}")
+    print(r.text)
+	seeds = json.loads(r.text)
+	return seeds
+
 
 def work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, max_redirects):
     """
@@ -320,12 +345,15 @@ def work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, hea
             #record_data = {'h1_titles':[], 'h2_titles':[],  'met_description':'', 'met_keywords':'' }
             #record = {'UUID': seed,'harvest_metadata':record_harv_met, 'connection_metadata':record_conn_data, 'page_data':record_data }
     """
-    global whois_time
+	global whois_time
     #record_json = []
     whois_time = pause_c
+	
+	print('\n - Seeds:')
+	[print('  --', seed) for seed in seeds]
     for i, seed in enumerate(seeds):
         sleep(whois_time)
-        print('\n Working on n. ',i, ' seed: ', seed, get_time())
+        print('\n  - Working on n. ',i, ' seed: ', seed, get_time())
       ## Datatype
         record_seeds_report= {'code': '0','status': '','seed': seed,'redirect': '','redirect_depth': '-1'}
         #record_conn_data = [{'seed': seed,'redirect_depth': 0, 'code': 0,'status': '','Content-Type': '', 'Encoding': '', 'Length': 0,'x-cache': '','x-cache-lookup': '','Date':''}] 
@@ -365,9 +393,6 @@ def work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, hea
             err = str(err)
             print(err)
             if '[Errno -2]' in err:
-            err = str(err)
-            print(err)
-            if '[Errno -2]' in err:
                 record['harvest_metadata'][0]['seeds_report']=[{}]
                 record['harvest_metadata'][0]['seeds_report'][0]['Error']=['1', 'RequestException :: ' + 'Failed to establish a new connection: [Errno -2] Name or service not known']
                 record['harvest_metadata'][0]['seeds_report'][0]['code']='-2'
@@ -389,6 +414,28 @@ def work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, hea
           print("Extraction runtime exception")
           post_json = record
           send_to_DB(endpoint, post_json)
+
+
+def get_data_batch(endpoint_seedsin, batch_in):
+	t = 0
+	datad = get_data(endpoint_seedsin, batch_in = batch_in, page = t)
+	seeds, total_ct, pages = parse_data(datad, batch_in = batch_in, page = t)
+	print("  -- Total seeds: ", total_ct)
+	seeds = seeds.split(' ')
+	t += 1
+	yield seeds, total_ct, t
+
+	while t < pages:
+		print("\n\n  -- Working on page: ", t)
+		datad = get_data(endpoint_seedsin, batch_in = batch_in, page = t)
+		seeds, total_ct, pages = parse_data(datad, batch_in = batch_in, page = t)
+		seeds = seeds.split(' ')
+		t += 1
+		yield seeds, total_ct, t
+
+def service_wrapper(endpoint_seedsin, batch_in, endpoint, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, max_redirects):
+	for seeds, total_ct, t in get_data_batch(endpoint_seedsin, batch_in):
+		work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, max_redirects)
 
 ## Monkey patching
 
@@ -437,14 +484,16 @@ if __name__=="__main__":
   whois.parser.WhoisCz = WhoisCz
 
   ## Proprietary variables
-  WebBEAT_v = 0.3
+  WebBEAT_v = 0.4
   user_agent='Mozilla/5.0 (Windows; U; Windows NT 5.1; de; rv:1.9.1.5) Gecko/20091102 Firefox/3.5.5'
   headers_in = {'user-agent': user_agent}
   headers_out=['Content-Type','Content-Length','Server','age','Date','x-cache','x-cache-lookup','X-Powered-By']
 
   ## Set up parser
   parser = argparse.ArgumentParser()
-  parser.add_argument("-e", "--Endpoint", help = "set API DB endpoint; -e {endpoint adress}/api/v2")
+  parser.add_argument("-e", "--Endpoint", help = "set API DB export endpoint; -e {endpoint adress}/api/v2")
+  parser.add_argument("-ss","--SeedsService", help = "set full adress for seeds API service; -ss {endpoint adress}")
+  parser.add_argument("-bss","--BatchSeedsService", help = "set batch size for seeds service; -bss {integer}")
   parser.add_argument("-s", "--Seeds", help = "set API seeds list; -s \'https://webarchiv.cz https://nkp.cz\' OR dont specify and get it from seeds endpoint")
   #parser.add_argument("-w", "--WHOIS", help = "activate WHOIS checking procedure, def. deactivated; -w True")
   parser.add_argument("-p", "--Pause", action='store', help = "set Pause between seeds, def. for Whois 61 s.; -p 10")
@@ -464,11 +513,21 @@ if __name__=="__main__":
   else:
     endpoint = 'https://121.0.0.1/api/v2/' #?db=test'
   if args.Seeds:
-    seeds = args.Seeds.split(' ')
+	    seeds = args.Seeds.split(' ')
+	    seeds_service = False
   else:
-    endpoint_seedsin =  endpoint + '?type=url'
-    seeds = get_data(endpoint_seedsin)
-    seeds = seeds.split(' ')
+	    if args.SeedsService:
+	        seeds_service = True
+	        endpoint_seedsin =  args.SeedsService
+	        try:
+	            batch_n = int(args.BatchSeedsService)
+	        except:
+	            print("Integer for batch number parameter need to be set (-bss), exiting the program.")
+	            sys.exit(0)
+	    else:
+	        print("No seeds or seedsservice parameter set (-s, -ss), exiting the program.")
+	        sys.exit(0)
+
   if args.Pause:
     pause_c=int(args.Pause)
   else:
@@ -498,7 +557,12 @@ if __name__=="__main__":
   print(' -- Whois module: ', whois_c)
   print(' -- live requests maximum redirects: ', max_redirects)
   print(' -- live requests timeout: ', timeout_margin)
-  print('\nSeeds:')
-  [print(' --', seed) for seed in seeds]
   print('\nProgramme run:\n')
-  work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, max_redirects)
+
+  if seeds_service:
+      print(' -- seeds service: On\n')
+      service_wrapper(endpoint_seedsin, batch_n, endpoint, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, max_redirects)
+  else:
+      print(' -- seeds service: Off\n')
+      work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, max_redirects)
+
