@@ -75,7 +75,7 @@ optional arguments:
 ```
 #crontab -e
 # no-whois example with urlFeeder service and batching
-1 * * * *  python3 /opt/WebBeat/WebBEAT.py -p 2 --no-whois -ss http://121.0.0.1/api/urlFeeder/ -bss 50 -e http://121.0.0.1/api/v2/ >> /opt/WebBeat/logs/WebBEAT_$(date +\%Y\%m\%d_\%H\%M).log
+1 * * * *  python3 /opt/WebBeat/WebBEAT.py -p 2 --no-whois -ss http://121.0.0.1/api/urlFeeder/ -t 30 -bss 50 -e http://121.0.0.1/api/v2/ >> /opt/WebBeat/logs/WebBEAT_$(date +\%Y\%m\%d_\%H\%M).log
 # whois option example without service
 0 1 1 * *  python3 /opt/webbeat/WebBEAT.py -p 120 --whois_c  -e http://121.0.0.1/api/v2/  -s "seeds1 seed2 ...">> /opt/WebBeat/logs/WebBEAT_$(date +\%Y\%m\%d__\%H\%M).log
 

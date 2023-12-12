@@ -3,9 +3,10 @@
 ### WebBEAT checker
 ### Building a DB of sites living attributes
 ### Created by Zdenko Vozar
-### v.0.4 2023 09 22
+### v.0.45 2023 12 10 
 
 import requests
+import chardet
 from bs4 import BeautifulSoup
 import json
 from datetime import datetime
@@ -77,7 +78,7 @@ def connection_data(seed, connection, peer_ip, peer_port, headers):
 
     if record_conn_data['redirect_depth'] == '0':
          record_conn_data['redirect_depth'] = '-1'
-    print("Connection headers", connection.headers)
+    print(" -- Connection headers out", connection.headers)
     record_conn_data['Error']= ['0', '']
     if peer_port=='None':
         record_conn_data['peer']['peer_port']='0'
@@ -86,7 +87,7 @@ def connection_data(seed, connection, peer_ip, peer_port, headers):
           if header == 'Content-Type':
               content_t = connection.headers[header].split(';')
               record_conn_data['Content-Type'] = content_t[0]
-              record_conn_data['Encoding'] = content_t[1].strip()
+              record_conn_data['Encoding'] = connection.encoding  #content_t[1].strip()
           else:
             if header == 'Date':
               server_time = connection.headers['Date']
@@ -117,7 +118,7 @@ def connection_data(seed, connection, peer_ip, peer_port, headers):
           if header == 'Server':
               record_conn_data['Server']['server-engine'] =  'NA'
               record_conn_data['Server']['server-version'] =  'NA'
-    print("Connection data", record_conn_data)
+    print(" -- Connection data", record_conn_data)
     return [record_conn_data]
 
 def soup_attrs_content(soup, tag, attr_name, attr_val, attr_target):
@@ -137,10 +138,10 @@ def metadata_extraction(content, code, leng, charset):
     met_author['mails'], met_author['names'], met_keywords['keys'] = [],[],[]
 
     #print("Content", content)
-    print("Metadata extraction", code, leng,  charset)
+    print(" -- Metadata extraction", code, leng,  charset)
     if code == '200':
       soup = BeautifulSoup(content, 'html5lib')
-      #print(soup)
+      print(soup)
       for item in soup.find_all('h1'):
           h1_titles.append(item.text.replace('\n','').strip())
       for item in soup.find_all('h2'):
@@ -162,15 +163,17 @@ def metadata_extraction(content, code, leng, charset):
         if item != "None" and ',' in item:
           met_keywords['keys'].extend(item.split(','))
     else:
+	  print('ERR: No extraction for ',code)
       title = 'None'
       met_description = ['None']
       met_keywords = ['None']
       if int(leng) > 20:
         soup = BeautifulSoup(content, 'html5lib')
         for item in soup.find_all('h2'):
-            h2_titles.append(item.text.replace('\n','').strip())
+        	h2_titles.append(item.text.replace('\n','').strip())
     record_data = [{'crawler': 'WebBeat ' + str(WebBEAT_v), 'timestamp': get_time(), 'title': title, 'h1_titles': h1_titles, 'h2_titles': h2_titles,  'met_description':met_description, 'met_keywords':met_keywords, 'met_author':met_author }]
-    return record_data
+    print(" -- Extraction data", record_data)
+	return record_data
 
 def get_whois(seed, record):
     global whois_time
@@ -280,11 +283,25 @@ def get_whois(seed, record):
       record['whois'] = [w]
       return record
 
+
+## Formatting Functs
+
 #until python 3.9
 def remove_prefix(input_string, prefix):
     if prefix and input_string.startswith(prefix):
         return input_string[len(prefix):]
     return input_string
+
+def add_suffix(input_string, suffix):
+	if suffix and not input_string.endswith(suffix):
+	    return input_string + suffix
+	return input_string
+
+def format_seeds(input_string):
+	input_string = add_suffix(input_string, '/')
+	return input_string
+
+## Parsing functs
 
 def parse_data(datad, batch_in = 50, page = 0):
 	total_ct = datad['sum']['total']
@@ -338,7 +355,7 @@ def get_seeds(seeds_endpoint):
 	return seeds
 
 
-def work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, max_redirects):
+def work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, timeout_margin_readout, max_redirects):
     """
             ## Datatype
             #['https://mzk.cz/', 1, 200, 'OK', 'text/html', 'charset=utf-8', '18210', 'Apache/2.4.25 (Debian)', None, 'Wed, 09 Mar 2022 14:02:56 GMT', None, None, None]
@@ -353,6 +370,7 @@ def work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, hea
 	[print('  --', seed) for seed in seeds]
     for i, seed in enumerate(seeds):
         sleep(whois_time)
+		seed = format_seed(seed)
         print('\n  - Working on n. ',i, ' seed: ', seed, get_time())
       ## Datatype
         record_seeds_report= {'code': '0','status': '','seed': seed,'redirect': '','redirect_depth': '-1'}
@@ -371,24 +389,30 @@ def work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, hea
         response, connection, metadata, data = [], [], [], []
         try:
           print('\n -- Working on Live requests; ',get_time())
-          ret = requests.get(seed, headers=headers_in, allow_redirects=True,  timeout=(2,30), stream=True) # , timeout=0.001/timeout_margin, , allow_redirects=True
-          if ret.encoding is None:
-            ret.encoding = 'utf-8'
+          ret = requests.get(seed, headers=headers_in, allow_redirects=True,  timeout=(timeout_margin, timeout_margin_readout), stream=True) # , timeout=0.001/timeout_margin, , allow_redirects=True
+          #print(ret.content)
+		  if ret.encoding is None:
+            #ret.encoding = 'utf-8'
+			ret.encoding  = chardet.detect(ret.content)
+			#ret.encoding = None
           try:
             peer_ip, peer_port = ret.raw._connection.sock.getpeername()
           except:
             peer_ip, peer_port = 'None','None'
         except requests.exceptions.Timeout as err:
+			print("ERR: The request timed out.")
             print("Timeout: {0}".format(err))
             # Maybe set up for a retry, or continue in a retry loop
             post_json = record
             send_to_DB(endpoint, post_json)
         except requests.exceptions.TooManyRedirects as err:
+		    print("ERR: Too many redirects.")
             print("TooManyRedirects: {0}".format(err))
             # Tell the user their URL was bad and try a different one
             post_json = record
             send_to_DB(endpoint, post_json)
         except requests.exceptions.RequestException as err:
+			print("ERR: Other request exception.")
             print("RequestException: {0}".format(err))
             err = str(err)
             print(err)
@@ -403,15 +427,19 @@ def work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, hea
             record['harvest_metadata'][0]['seeds_report']= connection_data(seed, ret, peer_ip, peer_port, headers=headers_in)
           except:
             record['harvest_metadata']=[{'crawler': 'WebBeat ' + str(WebBEAT_v), 'timestamp': get_time(),'Error':'Not extracted'}]
-          if record['harvest_metadata'][0]['seeds_report'][0]['code'] == '200':
+		  #print('Criteria for metadata extraction', record['harvest_metadata'][0]['seeds_report'][0]['code'])
+		  if record['harvest_metadata'][0]['seeds_report'][0]['code'] == '200':
               try:
+			    print(' err Print:')
+			    print(record['harvest_metadata'][0]['seeds_report'][0]['Encoding'])
                 record['page_data'] = metadata_extraction(ret.content,  record['harvest_metadata'][0]['seeds_report'][0]['code'], record['harvest_metadata'][0]['seeds_report'][0]['redirect_depth'], record['harvest_metadata'][0]['seeds_report'][0]['Encoding'])
-              except:
-                  record['page_data']=[{'crawler': 'WebBeat ' + str(WebBEAT_v), 'timestamp': get_time(),'Error':'Not extracted'}]
+              except Exception as err:
+			    print("ERR: MetaData extraction: {0}".format(err))
+                record['page_data']=[{'crawler': 'WebBeat ' + str(WebBEAT_v), 'timestamp': get_time(),'Error':'Not extracted'}]
           post_json = record
           send_to_DB(endpoint, post_json)
-        except:
-          print("Extraction runtime exception")
+        except Exception as err:
+          print(" - ERR: Extraction runtime exception {0}".format(err))
           post_json = record
           send_to_DB(endpoint, post_json)
 
@@ -433,9 +461,9 @@ def get_data_batch(endpoint_seedsin, batch_in):
 		t += 1
 		yield seeds, total_ct, t
 
-def service_wrapper(endpoint_seedsin, batch_in, endpoint, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, max_redirects):
+def service_wrapper(endpoint_seedsin, batch_in, endpoint, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, timeout_margin_readout, max_redirects):
 	for seeds, total_ct, t in get_data_batch(endpoint_seedsin, batch_in):
-		work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, max_redirects)
+		work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, timeout_margin_readout, max_redirects)
 
 ## Monkey patching
 
@@ -542,9 +570,11 @@ if __name__=="__main__":
   else:
     max_redirects = 15
   if args.TimeoutMargin and args.TimeoutMargin.isdecimal():
-    timeout_margin = args.TimeoutMargin
+    timeout_margin = int(args.TimeoutMargin)
+	timeout_margin_readout = timeout_margin + 10
   else:
     timeout_margin = 0.02
+	timeout_margin_readout = 10
 
 
 
@@ -557,12 +587,13 @@ if __name__=="__main__":
   print(' -- Whois module: ', whois_c)
   print(' -- live requests maximum redirects: ', max_redirects)
   print(' -- live requests timeout: ', timeout_margin)
+  print('  -- live requests timeout readout: ', timeout_margin_readout)
   print('\nProgramme run:\n')
 
   if seeds_service:
       print(' -- seeds service: On\n')
-      service_wrapper(endpoint_seedsin, batch_n, endpoint, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, max_redirects)
+      service_wrapper(endpoint_seedsin, batch_n, endpoint, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, timeout_margin_readout, max_redirects)
   else:
       print(' -- seeds service: Off\n')
-      work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, max_redirects)
+      work_on_seeds(endpoint, seeds, whois_c, pause_c, user_agent, headers_in, headers_out, timeout_margin, timeout_margin_readout, max_redirects)
 
